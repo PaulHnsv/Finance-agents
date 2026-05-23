@@ -1,0 +1,36 @@
+version: "3.9"
+services:
+  app:
+    build: .devcontainer
+    volumes:
+      - .:/workspace
+    env_file: .env
+    environment:
+      - PYTHONPATH=/workspace/src
+    depends_on:
+      - langfuse
+    command: sleep infinity
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  langfuse:
+    image: langfuse/langfuse:latest
+    depends_on:
+      - postgres
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
+      NEXTAUTH_SECRET: my-secret-key-change-in-prod
+      NEXTAUTH_URL: http://localhost:3000
+      SALT: my-salt-change-in-prod
+
+volumes:
+  postgres_data:
