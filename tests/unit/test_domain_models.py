@@ -134,6 +134,21 @@ def test_suggested_portfolio_allocations_optional_zero():
     assert sp.asset_allocations == []
 
 
+def test_suggested_portfolio_orm_persists(db_session):
+    from investimentos.domain.db import SuggestedPortfolioORM
+    orm = SuggestedPortfolioORM(
+        id="sp-1", name="X", source_file="x.pdf",
+        status="draft",
+        class_allocations_json=[{"asset_class": "acao", "target_pct": "100"}],
+        asset_allocations_json=[],
+    )
+    db_session.add(orm)
+    db_session.commit()
+    loaded = db_session.get(SuggestedPortfolioORM, "sp-1")
+    assert loaded.name == "X"
+    assert loaded.class_allocations_json[0]["asset_class"] == "acao"
+
+
 def test_portfolio_objective_allocations_not_100_raises():
     with pytest.raises(ValueError, match="sum to 100"):
         PortfolioObjective(

@@ -71,6 +71,19 @@ class PortfolioObjectiveORM(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class SuggestedPortfolioORM(Base):
+    __tablename__ = "suggested_portfolios"
+    id = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    source_file = Column(String, nullable=False)
+    risk_profile_hint = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="draft")
+    class_allocations_json = Column(JSON, nullable=False, default=list)
+    asset_allocations_json = Column(JSON, nullable=False, default=list)
+    imported_at = Column(DateTime, default=datetime.utcnow)
+    activated_at = Column(DateTime, nullable=True)
+
+
 class TaxEventORM(Base):
     __tablename__ = "tax_events"
     id = Column(String, primary_key=True)
