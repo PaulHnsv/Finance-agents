@@ -3,9 +3,10 @@ Portfolio Analyst — computes portfolio metrics deterministically, then asks
 the LLM to synthesize and explain the results. BRL absolutes never sent to LLM.
 """
 import json
-from anthropic import Anthropic
+
 from investimentos.agents.state import AgentState, DISCLAIMER
 from investimentos.config import get_settings
+from investimentos.llm.client import chat
 
 ANALYSIS_PROMPT = """Você é um analista de carteira especializado em investimentos brasileiros.
 
@@ -21,6 +22,7 @@ Inclua na sua análise:
 
 Seja conciso (máx. 300 palavras). Use tópicos onde apropriado. Não mencione valores em R$."""
 
+
 def portfolio_analyst_node(state: AgentState) -> dict:
     settings = get_settings()
     summary = state.portfolio_summary or {}
@@ -31,15 +33,15 @@ def portfolio_analyst_node(state: AgentState) -> dict:
         "twr_pct": summary.get("twr_pct"),
         "drift": summary.get("drift", {}),
     }
-    client = Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
-        model=settings.llm_model_default,
-        max_tokens=600,
+    analysis = chat(
         messages=[{
             "role": "user",
-            "content": ANALYSIS_PROMPT.format(metrics_json=json.dumps(metrics, default=str, ensure_ascii=False)),
+            "content": ANALYSIS_PROMPT.format(
+                metrics_json=json.dumps(metrics, default=str, ensure_ascii=False),
+            ),
         }],
+        model=settings.llm_model_default,
+        max_tokens=600,
     )
-    analysis = response.content[0].text.strip()
     output = f"## 📊 Análise de Carteira\n\n{analysis}{DISCLAIMER}"
     return {"specialist_outputs": [output]}

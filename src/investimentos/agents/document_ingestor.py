@@ -3,10 +3,13 @@ Document Ingestor — extracts transactions from documents.
 Requires user confirmation before persisting.
 """
 import json
+import re
 from pathlib import Path
-from anthropic import Anthropic
+
 from investimentos.agents.state import AgentState
 from investimentos.config import get_settings
+from investimentos.integrations.documents.pdf_extractor import extract_pdf
+from investimentos.llm.client import chat
 
 EXTRACTION_PROMPT = """Você é um extrator de dados financeiros. Analise o texto abaixo de um documento financeiro e extraia as transações.
 
@@ -31,6 +34,13 @@ Retorne um JSON com a seguinte estrutura:
 Se não encontrar transações, retorne "transactions": [].
 Responda APENAS com JSON válido."""
 
+_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
+
+
+def _strip_fences(text: str) -> str:
+    return _FENCE_RE.sub("", text).strip()
+
+
 def document_ingestor_node(state: AgentState) -> dict:
     if not state.document_path:
         return {"error": "Nenhum documento fornecido para ingestão"}
@@ -40,21 +50,19 @@ def document_ingestor_node(state: AgentState) -> dict:
         return {"error": f"Arquivo não encontrado: {path}"}
 
     settings = get_settings()
-    from investimentos.integrations.documents.pdf_extractor import extract_pdf
     text = extract_pdf(path)
 
-    client = Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
-        model=settings.llm_model_default,
-        max_tokens=2048,
+    raw = chat(
         messages=[{
             "role": "user",
             "content": EXTRACTION_PROMPT.format(text=text[:8000]),
         }],
+        model=settings.llm_model_default,
+        max_tokens=2048,
     )
 
     try:
-        result = json.loads(response.content[0].text.strip())
+        result = json.loads(_strip_fences(raw))
         transactions = result.get("transactions", [])
     except json.JSONDecodeError:
         return {"error": "Falha ao extrair transações do documento — formato não reconhecido"}

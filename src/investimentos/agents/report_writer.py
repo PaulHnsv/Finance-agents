@@ -1,7 +1,7 @@
 """Report Writer — synthesizes specialist outputs into a final markdown report."""
-from anthropic import Anthropic
 from investimentos.agents.state import AgentState, DISCLAIMER
 from investimentos.config import get_settings
+from investimentos.llm.client import chat
 
 REPORT_PROMPT = """Você é um redator de relatórios financeiros pessoais.
 
@@ -17,21 +17,19 @@ O relatório deve:
 
 Use markdown com cabeçalhos, tópicos e destaques em negrito. Não repita o disclaimer — ele será adicionado automaticamente."""
 
+
 def report_writer_node(state: AgentState) -> dict:
     if not state.specialist_outputs:
         return {"report_markdown": "Nenhuma análise disponível." + DISCLAIMER}
 
     settings = get_settings()
     combined = "\n\n---\n\n".join(state.specialist_outputs)
-
-    client = Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
-        model=settings.llm_model_default,
-        max_tokens=1500,
+    report = chat(
         messages=[{
             "role": "user",
             "content": REPORT_PROMPT.format(specialist_outputs=combined),
         }],
+        model=settings.llm_model_default,
+        max_tokens=1500,
     )
-    report = response.content[0].text.strip() + DISCLAIMER
-    return {"report_markdown": report}
+    return {"report_markdown": report + DISCLAIMER}

@@ -2,9 +2,9 @@
 Coordinator agent — classifies user intent and routes to specialists.
 Only the query text is sent to the LLM (no financial data).
 """
-from anthropic import Anthropic
 from investimentos.agents.state import AgentState
 from investimentos.config import get_settings
+from investimentos.llm.client import chat
 
 INTENT_PROMPT = """Você é o coordenador de um sistema de análise financeira pessoal.
 
@@ -20,19 +20,24 @@ Responda APENAS com a categoria, sem explicações.
 
 Query do usuário: {query}"""
 
+VALID_INTENTS = {
+    "portfolio_analysis",
+    "market_query",
+    "document_ingest",
+    "report",
+    "financial_planning",
+    "other",
+}
+
+
 def coordinator_node(state: AgentState) -> dict:
     settings = get_settings()
-    client = Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
+    raw = chat(
+        messages=[{"role": "user", "content": INTENT_PROMPT.format(query=state.user_query)}],
         model=settings.llm_model_light,
         max_tokens=20,
-        messages=[{
-            "role": "user",
-            "content": INTENT_PROMPT.format(query=state.user_query),
-        }],
     )
-    intent = response.content[0].text.strip().lower()
-    valid_intents = {"portfolio_analysis", "market_query", "document_ingest", "report", "financial_planning", "other"}
-    if intent not in valid_intents:
+    intent = raw.strip().lower()
+    if intent not in VALID_INTENTS:
         intent = "other"
     return {"intent": intent}
