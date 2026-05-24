@@ -58,9 +58,10 @@ uv run investimentos query "como está a diversificação da minha carteira?"
 uv run investimentos report
 uv run investimentos report --output relatorio.md
 
-# Importar documento
-uv run investimentos import nota_corretagem.pdf --account acc-1
-uv run investimentos import extrato.ofx --account acc-1
+# Importar documento (detecção automática)
+uv run investimentos import nota_corretagem.pdf --account acc-1     # transações
+uv run investimentos import extrato.ofx --account acc-1             # transações
+uv run investimentos import carteira_sugerida.pdf --account acc-1   # carteira sugerida → rascunho/ativação
 
 # Configurar perfil de investidor
 uv run investimentos profile
