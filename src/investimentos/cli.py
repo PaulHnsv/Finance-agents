@@ -73,12 +73,8 @@ def import_document(
 
     if doc_type == "transactions":
         transactions = result.get("extracted_transactions", []) or []
-        if transactions:
-            confirm = typer.confirm(f"\nImportar {len(transactions)} transação(ões)?")
-            if confirm:
-                console.print("[green]Transações importadas com sucesso.[/green]")
-            else:
-                console.print("[yellow]Importação cancelada.[/yellow]")
+        snapshot = result.get("extracted_snapshot") or {}
+        _handle_extrato_import(file, account_id, transactions, snapshot)
         return
 
     if doc_type == "suggested_portfolio":
@@ -87,6 +83,136 @@ def import_document(
         return
 
     console.print("[yellow]Nada a importar.[/yellow]")
+
+
+def _handle_extrato_import(
+    file: Path, account_id: str, transactions: list[dict], snapshot: dict
+) -> None:
+    from datetime import date
+    from decimal import Decimal
+    from sqlalchemy.orm import Session
+    from investimentos.config import get_settings
+    from investimentos.domain.db import engine_from_url
+    from investimentos.domain.models import (
+        Transaction,
+        TransactionType,
+        EquityPositionSnapshot,
+        FixedIncomePosition,
+        PortfolioSnapshot,
+    )
+    from investimentos.repository.transaction import TransactionRepository
+    from investimentos.repository.portfolio_snapshot_repo import PortfolioSnapshotRepository
+
+    settings = get_settings()
+    engine = engine_from_url(settings.database_url)
+
+    # --- Transactions ---
+    if transactions:
+        console.print("\n[bold]Transações encontradas:[/bold]")
+        for t in transactions[:20]:
+            console.print(
+                f"  {t.get('date','?'):<12} {t.get('type','?'):<6} "
+                f"{t.get('ticker','?'):<8} {t.get('quantity','?')} × R${t.get('price','?')}"
+            )
+        if len(transactions) > 20:
+            console.print(f"  ... e mais {len(transactions) - 20} transação(ões)")
+
+        if typer.confirm(f"\nSalvar {len(transactions)} transação(ões)?"):
+            _type_map = {
+                "compra": TransactionType.COMPRA,
+                "venda": TransactionType.VENDA,
+                "dividendo": TransactionType.DIVIDENDO,
+                "jcp": TransactionType.JCP,
+            }
+            with Session(engine) as session:
+                repo = TransactionRepository(session)
+                saved = 0
+                for raw in transactions:
+                    try:
+                        txn = Transaction(
+                            account_id=account_id,
+                            ticker=raw["ticker"],
+                            transaction_type=_type_map.get(
+                                raw.get("type", "").lower(), TransactionType.COMPRA
+                            ),
+                            quantity=Decimal(str(raw.get("quantity", 0))),
+                            unit_price=Decimal(str(raw.get("price", 0))),
+                            date=date.fromisoformat(raw["date"]),
+                            fees=Decimal(str(raw.get("fees", 0))),
+                        )
+                        repo.save(txn)
+                        saved += 1
+                    except (KeyError, ValueError) as exc:
+                        console.print(f"  [yellow]Ignorando transação inválida: {exc}[/yellow]")
+            console.print(f"[green]{saved} transação(ões) salva(s).[/green]")
+        else:
+            console.print("[yellow]Transações não salvas.[/yellow]")
+
+    # --- Snapshot ---
+    equity = snapshot.get("equity_snapshot", [])
+    fixed = snapshot.get("fixed_income_snapshot", [])
+    period_end = snapshot.get("period_end")
+
+    if equity or fixed:
+        console.print("\n[bold]Snapshot de posições:[/bold]")
+        for p in equity:
+            console.print(
+                f"  {p.get('ticker','?'):<8} {p.get('quantity','?')} un."
+                f"  (PM hint: R${p.get('avg_cost_hint','?')})"
+            )
+        for fi in fixed:
+            console.print(
+                f"  {fi.get('name','?'):<30} R${fi.get('current_value','?')}"
+                f"  {fi.get('rate_description','')}"
+            )
+
+        if typer.confirm(
+            f"\nSalvar snapshot de posições (data: {period_end or 'desconhecida'})?",
+            default=True,
+        ):
+            try:
+                snap_date = date.fromisoformat(period_end) if period_end else date.today()
+            except ValueError:
+                snap_date = date.today()
+
+            snap = PortfolioSnapshot(
+                account_id=account_id,
+                snapshot_date=snap_date,
+                source_file=str(file),
+                equity_positions=[
+                    EquityPositionSnapshot(
+                        ticker=p["ticker"],
+                        quantity=Decimal(str(p.get("quantity", 0))),
+                        avg_cost_hint=(
+                            Decimal(str(p["avg_cost_hint"])) if p.get("avg_cost_hint") else None
+                        ),
+                    )
+                    for p in equity
+                ],
+                fixed_income_positions=[
+                    FixedIncomePosition(
+                        name=fi["name"],
+                        issuer=fi.get("issuer"),
+                        maturity_date=(
+                            date.fromisoformat(fi["maturity_date"])
+                            if fi.get("maturity_date")
+                            else None
+                        ),
+                        invested_amount=Decimal(str(fi.get("invested_amount", 0))),
+                        rate_description=fi.get("rate_description"),
+                        current_value=Decimal(str(fi.get("current_value", 0))),
+                    )
+                    for fi in fixed
+                ],
+            )
+            with Session(engine) as session:
+                snap_repo = PortfolioSnapshotRepository(session)
+                snap_repo.save(snap)
+            console.print(
+                f"[green]Snapshot salvo (data: {snap_date.isoformat()}, id={snap.id}).[/green]"
+            )
+        else:
+            console.print("[yellow]Snapshot não salvo.[/yellow]")
 
 
 def _handle_suggested_portfolio(file: Path, suggestion: dict) -> None:
