@@ -40,6 +40,23 @@ def test_parser_returns_empty_on_no_matches():
     assert result["asset_allocations"] == []
 
 
+def test_parser_extracts_header_style_tickers():
+    text = """Ações Brasil:
+
+ITUB4 — Itaú Unibanco
+Banco com forte super app que aprimora a experiência do cliente.
+
+BBDC4 — Bradesco
+Política prudente de risco e governança histórica.
+"""
+    result = parse_suggested_portfolio(text)
+    tickers = {a["ticker"]: a for a in result["asset_allocations"]}
+    assert "ITUB4" in tickers
+    assert "BBDC4" in tickers
+    assert tickers["ITUB4"]["target_pct"] == Decimal("0")
+    assert "super app" in tickers["ITUB4"]["thesis"].lower()
+
+
 def test_parser_falls_back_to_llm(monkeypatch):
     import investimentos.integrations.documents.suggested_portfolio_parser as mod
     monkeypatch.setattr(mod, "_llm_extract", lambda t: {

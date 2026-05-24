@@ -23,6 +23,9 @@ CLASS_ALIASES = {
 _TICKER_RE = re.compile(
     r"\b([A-Z]{4}\d{1,2})\b\s*[—\-:]?\s*(\d+(?:[.,]\d+)?)\s*%\s*[—\-:]?\s*(.*)"
 )
+_TICKER_HEADER_RE = re.compile(
+    r"^\s*([A-Z]{4}\d{1,2})\s*[—–\-]\s*(.+?)\s*$"
+)
 _CLASS_LINE_RE = re.compile(
     r"^\s*([A-Za-zÀ-ÿ ]+?)\s*[:\-]\s*(\d+(?:[.,]\d+)?)\s*%\s*$",
     re.MULTILINE,
@@ -43,17 +46,53 @@ def parse_suggested_portfolio(text: str) -> dict:
                 "target_pct": _to_decimal(m.group(2)),
             })
 
-    asset_allocs = []
-    for line in text.splitlines():
+    asset_allocs: list[dict] = []
+    seen_tickers: set[str] = set()
+    lines = text.splitlines()
+
+    # Pattern A: "TICKER X% — tese" (com percentual)
+    for line in lines:
         m = _TICKER_RE.search(line)
         if not m:
             continue
-        ticker, pct, rest = m.group(1), m.group(2), (m.group(3) or "").strip()
+        ticker = m.group(1).upper()
+        if ticker in seen_tickers:
+            continue
+        rest = (m.group(3) or "").strip()
         asset_allocs.append({
-            "ticker": ticker.upper(),
-            "target_pct": _to_decimal(pct),
+            "ticker": ticker,
+            "target_pct": _to_decimal(m.group(2)),
             "thesis": rest[:200] if rest else None,
         })
+        seen_tickers.add(ticker)
+
+    # Pattern B: "TICKER — Nome do ativo" (header de seção, sem percentual)
+    # Tese = primeira linha não-vazia subsequente até linha em branco
+    for i, line in enumerate(lines):
+        m = _TICKER_HEADER_RE.match(line)
+        if not m:
+            continue
+        ticker = m.group(1).upper()
+        if ticker in seen_tickers:
+            continue
+        thesis_parts = []
+        for next_line in lines[i + 1 : i + 6]:
+            stripped = next_line.strip()
+            if not stripped:
+                if thesis_parts:
+                    break
+                continue
+            thesis_parts.append(stripped)
+            if len(" ".join(thesis_parts)) >= 120:
+                break
+        thesis = " ".join(thesis_parts)[:200] if thesis_parts else None
+        asset_allocs.append({
+            "ticker": ticker,
+            "target_pct": Decimal("0"),
+            "thesis": thesis,
+        })
+        seen_tickers.add(ticker)
+
     return {"class_allocations": class_allocs, "asset_allocations": asset_allocs}
 
 
