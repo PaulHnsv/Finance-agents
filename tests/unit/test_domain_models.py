@@ -159,3 +159,57 @@ def test_portfolio_objective_allocations_not_100_raises():
             ],
             valid_from=date(2024, 1, 1),
         )
+
+
+# Portfolio Snapshot models
+from investimentos.domain.models import EquityPositionSnapshot, FixedIncomePosition, PortfolioSnapshot
+
+
+def test_equity_position_snapshot_ticker_uppercase():
+    pos = EquityPositionSnapshot(ticker="itub4", quantity=Decimal("12"))
+    assert pos.ticker == "ITUB4"
+
+
+def test_equity_position_snapshot_optional_cost():
+    pos = EquityPositionSnapshot(ticker="ITUB4", quantity=Decimal("12"))
+    assert pos.avg_cost_hint is None
+
+
+def test_fixed_income_position_minimal():
+    fi = FixedIncomePosition(
+        name="CDB Banco Fibra",
+        invested_amount=Decimal("5000.00"),
+        current_value=Decimal("5100.00"),
+    )
+    assert fi.name == "CDB Banco Fibra"
+    assert fi.issuer is None
+    assert fi.maturity_date is None
+
+
+def test_portfolio_snapshot_has_auto_id():
+    snap = PortfolioSnapshot(
+        account_id="acc-1",
+        snapshot_date=date(2026, 5, 22),
+        source_file="extrato.pdf",
+    )
+    assert snap.id
+    assert snap.account_id == "acc-1"
+    assert snap.equity_positions == []
+    assert snap.fixed_income_positions == []
+
+
+def test_portfolio_snapshot_holds_positions():
+    snap = PortfolioSnapshot(
+        account_id="acc-1",
+        snapshot_date=date(2026, 5, 22),
+        source_file="extrato.pdf",
+        equity_positions=[
+            EquityPositionSnapshot(ticker="ITUB4", quantity=Decimal("12"), avg_cost_hint=Decimal("39.38")),
+        ],
+        fixed_income_positions=[
+            FixedIncomePosition(name="CDB X", invested_amount=Decimal("5000"), current_value=Decimal("5100")),
+        ],
+    )
+    assert len(snap.equity_positions) == 1
+    assert snap.equity_positions[0].ticker == "ITUB4"
+    assert len(snap.fixed_income_positions) == 1

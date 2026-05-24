@@ -208,3 +208,36 @@ class TaxEvent(BaseModel):
     darf_code: Optional[str] = None
     notes: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EquityPositionSnapshot(BaseModel):
+    """Equity position from an account statement (stored, not computed)."""
+    ticker: str
+    quantity: Decimal
+    avg_cost_hint: Optional[Decimal] = None
+
+    @field_validator("ticker")
+    @classmethod
+    def ticker_uppercase(cls, v: str) -> str:
+        return v.upper().strip()
+
+
+class FixedIncomePosition(BaseModel):
+    """Fixed income holding without exchange ticker (CDB, LCI, LCA, etc.)."""
+    name: str
+    issuer: Optional[str] = None
+    maturity_date: Optional[date] = None
+    invested_amount: Decimal
+    rate_description: Optional[str] = None
+    current_value: Decimal
+
+
+class PortfolioSnapshot(BaseModel):
+    """Snapshot of holdings at a point in time, imported from an account statement."""
+    id: str = Field(default_factory=new_id)
+    account_id: str
+    snapshot_date: date
+    source_file: str
+    imported_at: datetime = Field(default_factory=datetime.utcnow)
+    equity_positions: list[EquityPositionSnapshot] = Field(default_factory=list)
+    fixed_income_positions: list[FixedIncomePosition] = Field(default_factory=list)
