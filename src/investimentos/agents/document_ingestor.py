@@ -1,49 +1,14 @@
 """Document Ingestor — routes by detected document type."""
-import json
-import re
 from pathlib import Path
 
 from investimentos.agents.state import AgentState
-from investimentos.config import get_settings
 from investimentos.integrations.documents.pdf_extractor import extract_pdf
 from investimentos.integrations.documents.document_classifier import classify_document
 from investimentos.integrations.documents.suggested_portfolio_parser import (
     parse_suggested_portfolio_with_fallback,
 )
+from investimentos.integrations.documents.extrato_parser import parse_extrato
 from investimentos.integrations.documents.sanitizer import sanitize
-from investimentos.llm.client import chat
-
-
-EXTRACTION_PROMPT = """Você é um extrator de dados financeiros. Analise o texto abaixo e extraia as transações.
-
-Texto:
-{text}
-
-Retorne JSON:
-{{
-  "document_type": "nota_corretagem|informe|extrato|outro",
-  "transactions": [{{"date":"YYYY-MM-DD","ticker":"XXXX4","type":"compra|venda|dividendo|jcp","quantity":0.0,"price":0.0,"fees":0.0}}]
-}}
-Responda APENAS JSON."""
-
-_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
-
-
-def _strip_fences(s: str) -> str:
-    return _FENCE_RE.sub("", s).strip()
-
-
-def _extract_transactions(text: str) -> dict | None:
-    settings = get_settings()
-    raw = chat(
-        messages=[{"role": "user", "content": EXTRACTION_PROMPT.format(text=text[:8000])}],
-        model=settings.llm_model_default,
-        max_tokens=2048,
-    )
-    try:
-        return json.loads(_strip_fences(raw))
-    except json.JSONDecodeError:
-        return None
 
 
 def document_ingestor_node(state: AgentState) -> dict:
@@ -70,17 +35,27 @@ def document_ingestor_node(state: AgentState) -> dict:
         }
 
     if doc_type == "transactions":
-        result = _extract_transactions(sanitize(text))
+        result = parse_extrato(sanitize(text))
         if result is None:
             return {"error": "Falha ao extrair transações do documento — formato não reconhecido"}
         transactions = result.get("transactions", [])
+        equity_snapshot = result.get("equity_snapshot", [])
+        fixed_income_snapshot = result.get("fixed_income_snapshot", [])
+        period_end = result.get("period_end")
         return {
             "document_type": "transactions",
             "extracted_transactions": transactions,
+            "extracted_snapshot": {
+                "period_end": period_end,
+                "equity_snapshot": equity_snapshot,
+                "fixed_income_snapshot": fixed_income_snapshot,
+            },
             "specialist_outputs": [
-                f"## 📄 Documento Processado\n\n"
-                f"Tipo: `{result.get('document_type', 'desconhecido')}`\n\n"
-                f"**{len(transactions)} transação(ões) encontrada(s)**.\n\n"
+                f"## 📄 Extrato Processado\n\n"
+                f"Período: `{period_end or 'desconhecido'}`\n\n"
+                f"**{len(transactions)} transação(ões)** | "
+                f"**{len(equity_snapshot)} posição(ões) em ações** | "
+                f"**{len(fixed_income_snapshot)} posição(ões) em renda fixa**\n\n"
                 f"Revise e confirme antes de importar."
             ],
         }

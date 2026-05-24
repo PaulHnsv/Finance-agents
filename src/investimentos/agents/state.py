@@ -23,6 +23,7 @@ class AgentState(BaseModel):
     document_path: Optional[str] = None
     extracted_transactions: Optional[list[dict]] = None
     extracted_suggestion: Optional[dict] = None
+    extracted_snapshot: Optional[dict] = None
     document_type: Optional[str] = None
     user_confirmed: bool = False
     report_markdown: Optional[str] = None

@@ -6,7 +6,7 @@ _SUG_TEXT = "Portfólio Sugerido\nPerfil moderado\nAções Brasil: 40%\nITUB4 5%
 
 
 @patch("investimentos.agents.document_ingestor.extract_pdf", return_value=_TXN_TEXT)
-@patch("investimentos.agents.document_ingestor.chat")
+@patch("investimentos.integrations.documents.extrato_parser.chat")
 def test_document_ingestor_parses_plain_json(mock_chat, _mock_pdf, tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp-x")
     from investimentos.config import get_settings
@@ -15,9 +15,10 @@ def test_document_ingestor_parses_plain_json(mock_chat, _mock_pdf, tmp_path, mon
     from investimentos.agents.document_ingestor import document_ingestor_node
 
     mock_chat.return_value = (
-        '{"document_type": "extrato", '
-        '"transactions": [{"date":"2025-01-02","ticker":"PETR4",'
-        '"type":"compra","quantity":100,"price":30.0,"fees":0.0}]}'
+        '{"period_end":"2025-01-02","transactions":[{"date":"2025-01-02","ticker":"PETR4",'
+        '"type":"compra","quantity":100,"price":30.0,"fees":0.0}],'
+        '"equity_snapshot":[{"ticker":"PETR4","quantity":100.0,"avg_cost_hint":30.0}],'
+        '"fixed_income_snapshot":[]}'
     )
     f = tmp_path / "doc.pdf"
     f.write_bytes(b"%PDF-1.4")
@@ -28,7 +29,7 @@ def test_document_ingestor_parses_plain_json(mock_chat, _mock_pdf, tmp_path, mon
 
 
 @patch("investimentos.agents.document_ingestor.extract_pdf", return_value=_TXN_TEXT)
-@patch("investimentos.agents.document_ingestor.chat")
+@patch("investimentos.integrations.documents.extrato_parser.chat")
 def test_document_ingestor_strips_markdown_fences(mock_chat, _mock_pdf, tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp-x")
     from investimentos.config import get_settings
@@ -37,7 +38,7 @@ def test_document_ingestor_strips_markdown_fences(mock_chat, _mock_pdf, tmp_path
     from investimentos.agents.document_ingestor import document_ingestor_node
 
     mock_chat.return_value = (
-        '```json\n{"document_type":"outro","transactions":[]}\n```'
+        '```json\n{"period_end":null,"transactions":[],"equity_snapshot":[],"fixed_income_snapshot":[]}\n```'
     )
     f = tmp_path / "doc.pdf"
     f.write_bytes(b"%PDF-1.4")
@@ -47,7 +48,7 @@ def test_document_ingestor_strips_markdown_fences(mock_chat, _mock_pdf, tmp_path
 
 
 @patch("investimentos.agents.document_ingestor.extract_pdf", return_value=_TXN_TEXT)
-@patch("investimentos.agents.document_ingestor.chat")
+@patch("investimentos.integrations.documents.extrato_parser.chat")
 def test_document_ingestor_invalid_json_returns_error(mock_chat, _mock_pdf, tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp-x")
     from investimentos.config import get_settings
