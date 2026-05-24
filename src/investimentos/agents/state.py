@@ -22,6 +22,8 @@ class AgentState(BaseModel):
     allocation_drift: Optional[dict[str, Any]] = None
     document_path: Optional[str] = None
     extracted_transactions: Optional[list[dict]] = None
+    extracted_suggestion: Optional[dict] = None
+    document_type: Optional[str] = None
     user_confirmed: bool = False
     report_markdown: Optional[str] = None
     error: Optional[str] = None
