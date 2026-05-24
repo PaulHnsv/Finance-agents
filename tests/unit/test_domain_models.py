@@ -112,6 +112,28 @@ def test_portfolio_objective_allocations_sum_to_100():
     total = sum(a.target_pct for a in obj.allocations)
     assert total == Decimal("100")
 
+from investimentos.domain.models import (
+    SuggestedPortfolio, SuggestedAssetAllocation, SuggestedClassAllocation,
+    SuggestedPortfolioStatus,
+)
+
+def test_suggested_portfolio_minimal():
+    sp = SuggestedPortfolio(
+        name="Carteira XP",
+        source_file="x.pdf",
+        class_allocations=[SuggestedClassAllocation(asset_class=AssetClass.ACAO, target_pct=Decimal("50"))],
+        asset_allocations=[SuggestedAssetAllocation(ticker="itub4", target_pct=Decimal("5"), thesis="ok")],
+    )
+    assert sp.status == SuggestedPortfolioStatus.DRAFT
+    assert sp.asset_allocations[0].ticker == "ITUB4"
+    assert isinstance(sp.imported_at, datetime)
+
+def test_suggested_portfolio_allocations_optional_zero():
+    sp = SuggestedPortfolio(name="x", source_file="x")
+    assert sp.class_allocations == []
+    assert sp.asset_allocations == []
+
+
 def test_portfolio_objective_allocations_not_100_raises():
     with pytest.raises(ValueError, match="sum to 100"):
         PortfolioObjective(

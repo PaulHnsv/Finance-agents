@@ -164,6 +164,40 @@ class PortfolioObjective(BaseModel):
         return v
 
 
+class SuggestedPortfolioStatus(str, Enum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class SuggestedClassAllocation(BaseModel):
+    asset_class: AssetClass
+    target_pct: Decimal
+
+
+class SuggestedAssetAllocation(BaseModel):
+    ticker: str
+    target_pct: Decimal
+    thesis: Optional[str] = None
+
+    @field_validator("ticker")
+    @classmethod
+    def ticker_uppercase(cls, v: str) -> str:
+        return v.upper().strip()
+
+
+class SuggestedPortfolio(BaseModel):
+    id: str = Field(default_factory=new_id)
+    name: str
+    source_file: str
+    risk_profile_hint: Optional[RiskProfile] = None
+    class_allocations: list[SuggestedClassAllocation] = Field(default_factory=list)
+    asset_allocations: list[SuggestedAssetAllocation] = Field(default_factory=list)
+    status: SuggestedPortfolioStatus = SuggestedPortfolioStatus.DRAFT
+    imported_at: datetime = Field(default_factory=datetime.utcnow)
+    activated_at: Optional[datetime] = None
+
+
 class TaxEvent(BaseModel):
     id: str = Field(default_factory=new_id)
     year: int
