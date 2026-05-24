@@ -84,6 +84,17 @@ class SuggestedPortfolioORM(Base):
     activated_at = Column(DateTime, nullable=True)
 
 
+class PortfolioSnapshotORM(Base):
+    __tablename__ = "portfolio_snapshots"
+    id = Column(String, primary_key=True)
+    account_id = Column(String, nullable=False)
+    snapshot_date = Column(Date, nullable=False)
+    source_file = Column(String, nullable=False)
+    imported_at = Column(DateTime, default=datetime.utcnow)
+    equity_positions_json = Column(JSON, nullable=False, default=list)
+    fixed_income_positions_json = Column(JSON, nullable=False, default=list)
+
+
 class TaxEventORM(Base):
     __tablename__ = "tax_events"
     id = Column(String, primary_key=True)
