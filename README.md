@@ -18,7 +18,13 @@ Um sistema de agentes de IA para análise e acompanhamento de carteiras de inves
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv) — gerenciador de pacotes
 - Docker + Docker Compose (opcional, para Langfuse)
-- Chave API da Anthropic
+- Personal Access Token do GitHub com escopo `models:read` (gere em https://github.com/settings/tokens)
+
+### Provider de IA
+
+O sistema usa a **GitHub Models API** (`https://models.github.ai/inference`), serviço gratuito do GitHub para prototipagem, autenticado via PAT. Modelos default: `openai/gpt-4o` (análises) e `openai/gpt-4o-mini` (classificação de intent). Substituíveis via `LLM_MODEL_DEFAULT` / `LLM_MODEL_LIGHT`.
+
+> ⚠️ GitHub Models tem rate limits agressivos (~50 req/dia no tier "high"). Para uso de produção, migre para Azure AI Foundry — o SDK é o mesmo, só muda `LLM_BASE_URL` e a chave.
 
 ## Quick Start
 
@@ -29,7 +35,7 @@ cd "Finance agents"
 
 # 2. Configure variáveis de ambiente
 cp .env.example .env
-# Edite .env e adicione: ANTHROPIC_API_KEY=sk-ant-...
+# Edite .env e adicione: GITHUB_TOKEN=ghp_...
 
 # 3. Instale dependências
 uv sync
@@ -74,7 +80,8 @@ src/investimentos/
 ├── repository/                  # CRUD + HoldingComputer
 ├── integrations/                # brapi.dev, yfinance, OFX, CSV, PDF, Tesouro Direto
 ├── tools/                       # Cálculos: custo médio, TWR, volatilidade, drift
-├── agents/                      # Agentes Claude (coordinator, portfolio, market, etc.)
+├── agents/                      # Agentes LLM (coordinator, portfolio, market, etc.)
+├── llm/                         # Client LLM provider-agnostic (GitHub Models)
 ├── workflows/                   # LangGraph StateGraph
 ├── flows/                       # Fluxos interativos (suitability, objetivo)
 └── cli.py                       # Entrypoint Typer
