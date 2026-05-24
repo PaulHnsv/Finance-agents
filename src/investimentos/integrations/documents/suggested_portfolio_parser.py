@@ -4,6 +4,7 @@ import re
 from decimal import Decimal
 
 from investimentos.config import get_settings
+from investimentos.integrations.documents.sanitizer import sanitize
 from investimentos.llm.client import chat
 
 
@@ -110,7 +111,7 @@ Se nada extraível, retorne listas vazias. Responda APENAS JSON."""
 def _llm_extract(text: str) -> dict:
     settings = get_settings()
     raw = chat(
-        messages=[{"role": "user", "content": _LLM_PROMPT.format(text=text[:8000])}],
+        messages=[{"role": "user", "content": _LLM_PROMPT.format(text=sanitize(text)[:8000])}],
         model=settings.llm_model_default,
         max_tokens=2048,
     )

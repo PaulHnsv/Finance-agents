@@ -10,6 +10,7 @@ from investimentos.integrations.documents.document_classifier import classify_do
 from investimentos.integrations.documents.suggested_portfolio_parser import (
     parse_suggested_portfolio_with_fallback,
 )
+from investimentos.integrations.documents.sanitizer import sanitize
 from investimentos.llm.client import chat
 
 
@@ -69,7 +70,7 @@ def document_ingestor_node(state: AgentState) -> dict:
         }
 
     if doc_type == "transactions":
-        result = _extract_transactions(text)
+        result = _extract_transactions(sanitize(text))
         if result is None:
             return {"error": "Falha ao extrair transações do documento — formato não reconhecido"}
         transactions = result.get("transactions", [])
