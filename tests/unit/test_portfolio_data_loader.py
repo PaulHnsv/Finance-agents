@@ -2,7 +2,7 @@
 import pytest
 from datetime import date
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -109,3 +109,35 @@ def test_loader_hhi_single_asset_is_one(mock_engine, mock_prices, db_engine):
     from investimentos.agents.portfolio_data_loader import portfolio_data_loader_node
     out = portfolio_data_loader_node(AgentState(user_query="x"))
     assert out["portfolio_summary"]["hhi"] == pytest.approx(1.0, abs=0.001)
+
+
+def test_compute_portfolio_max_drawdown_with_mock():
+    from investimentos.agents.portfolio_data_loader import _compute_portfolio_max_drawdown
+
+    # Generate 60 days of declining-then-recovering prices
+    dates = [f"2026-{str(i // 30 + 3).zfill(2)}-{str(i % 30 + 1).zfill(2)}" for i in range(60)]
+    prices = [Decimal(str(100 - i)) if i < 30 else Decimal(str(70 + (i - 30))) for i in range(60)]
+    hist = [{"date": d, "close": p, "volume": 1000} for d, p in zip(dates, prices)]
+
+    mock_yf = MagicMock()
+    mock_yf.get_historical.return_value = hist
+
+    with patch("investimentos.agents.portfolio_data_loader.YFinanceClient", return_value=mock_yf):
+        result = _compute_portfolio_max_drawdown(
+            [{"ticker": "ITUB4", "qty": Decimal("10"), "avg_cost": Decimal("100"), "current_price": Decimal("100")}],
+            {"ITUB4": 100.0},
+        )
+
+    assert result is not None
+    assert result < 0  # drawdown is negative
+    assert result == pytest.approx(-30.0, abs=1.0)  # 100 → 70 = 30% drawdown
+
+
+def test_compute_portfolio_max_drawdown_returns_none_on_error():
+    from investimentos.agents.portfolio_data_loader import _compute_portfolio_max_drawdown
+    with patch("investimentos.agents.portfolio_data_loader.YFinanceClient", side_effect=Exception("no network")):
+        result = _compute_portfolio_max_drawdown(
+            [{"ticker": "ITUB4", "qty": Decimal("10"), "avg_cost": Decimal("100"), "current_price": Decimal("100")}],
+            {"ITUB4": 100.0},
+        )
+    assert result is None

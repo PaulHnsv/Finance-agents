@@ -4,7 +4,7 @@ Priority order:
 1. Compute holdings from TransactionRepository (most accurate — all history)
 2. Fallback to PortfolioSnapshotRepository.get_latest() (from imported extrato)
 
-Populates: allocation_pct, hhi, drift, source (transactions|snapshot|empty).
+Populates: allocation_pct, hhi, drift, max_drawdown_pct, source (transactions|snapshot|empty).
 Market prices fetched via yfinance; falls back to avg_cost if unavailable.
 BRL absolutes never written to state (privacy).
 """
@@ -14,6 +14,7 @@ from typing import Optional
 from investimentos.agents.state import AgentState
 from investimentos.config import get_settings
 from investimentos.domain.db import engine_from_url
+from investimentos.integrations.yfinance_adapter import YFinanceClient
 from sqlalchemy.orm import Session
 
 
@@ -60,6 +61,7 @@ def portfolio_data_loader_node(state: AgentState) -> dict:
             "allocation_pct": allocation_pct,
             "hhi": hhi,
             "drift": drift,
+            "max_drawdown_pct": _compute_portfolio_max_drawdown(holdings, allocation_pct),
             "ticker_count": len(holdings),
         }
     }
@@ -100,7 +102,6 @@ def _load_from_snapshot(session: Session, account_id: Optional[str]) -> list[dic
 def _fetch_prices(tickers: list[str]) -> dict[str, Decimal]:
     prices: dict[str, Decimal] = {}
     try:
-        from investimentos.integrations.yfinance_adapter import YFinanceClient
         yf = YFinanceClient()
         for ticker in tickers:
             try:
@@ -161,3 +162,54 @@ def _compute_drift(_, holdings: list[dict], allocation_pct: dict, total_value: D
         cls: {k: float(v) if isinstance(v, Decimal) else v for k, v in d.items()}
         for cls, d in raw_drift.items()
     }
+
+
+def _compute_portfolio_max_drawdown(holdings: list[dict], allocation_pct: dict) -> Optional[float]:
+    """Compute weighted portfolio max drawdown using 1-year price history from yfinance.
+
+    Returns the max drawdown % as a negative float (e.g. -18.5), or None if unavailable.
+    """
+    try:
+        from investimentos.tools.risk import compute_max_drawdown
+
+        yf_client = YFinanceClient()
+        total_weight = sum(allocation_pct.values())
+        if total_weight == 0:
+            return None
+
+        # Collect daily close prices per ticker
+        ticker_series: dict[str, dict[str, Decimal]] = {}
+        for ticker in list(allocation_pct.keys())[:12]:  # cap at 12 to avoid slow startup
+            try:
+                hist = yf_client.get_historical(f"{ticker}.SA", period="1y", interval="1d")
+                if hist:
+                    ticker_series[ticker] = {row["date"]: row["close"] for row in hist}
+            except Exception:
+                pass
+
+        if not ticker_series:
+            return None
+
+        # Align dates across all tickers that have history
+        all_dates = sorted(
+            set.intersection(*[set(v.keys()) for v in ticker_series.values()])
+        )
+        if len(all_dates) < 20:
+            return None
+
+        # Build weighted portfolio value series (base = 100 at first date)
+        first_prices = {t: series[all_dates[0]] for t, series in ticker_series.items()}
+        portfolio_values: list[Decimal] = []
+        for d in all_dates:
+            port_val = Decimal("0")
+            for ticker, series in ticker_series.items():
+                weight = Decimal(str(allocation_pct.get(ticker, 0))) / Decimal("100")
+                if first_prices[ticker] > 0:
+                    relative = series[d] / first_prices[ticker]
+                    port_val += weight * relative * Decimal("100")
+            portfolio_values.append(port_val)
+
+        dd = compute_max_drawdown(portfolio_values)
+        return -float(dd)  # return as negative number (convention: -18.5 means 18.5% drawdown)
+    except Exception:
+        return None
