@@ -31,29 +31,35 @@ def portfolio_data_loader_node(state: AgentState) -> dict:
             holdings = _load_from_snapshot(session, account_id)
             source = "snapshot" if holdings else "empty"
 
-    if not holdings:
+        # Fixed income from snapshot is always loaded (even when equity comes from transactions)
+        fi_total = _load_fi_total_from_snapshot(session, account_id)
+
+    if not holdings and fi_total == 0:
         return {"portfolio_summary": {"source": "empty", "allocation_pct": {}, "hhi": None}}
 
-    prices = _fetch_prices([h["ticker"] for h in holdings])
+    quotes = _fetch_quotes([h["ticker"] for h in holdings])
     for h in holdings:
-        h["current_price"] = prices.get(h["ticker"], h["avg_cost"])
+        h["current_price"] = quotes.get(h["ticker"], {}).get("price", h["avg_cost"])
 
-    total_value = sum(h["qty"] * h["current_price"] for h in holdings)
+    equity_value = sum(h["qty"] * h["current_price"] for h in holdings)
+    total_value = equity_value + fi_total
     if total_value == 0:
         return {"portfolio_summary": {"source": source, "allocation_pct": {}, "hhi": None}}
 
-    # allocation% per ticker (no BRL amounts in state)
-    allocation_pct = {
+    # allocation% per ticker for equity (no BRL amounts in state)
+    allocation_pct: dict[str, float] = {
         h["ticker"]: float(((h["qty"] * h["current_price"]) / total_value * 100).quantize(Decimal("0.01")))
         for h in holdings
     }
+    if fi_total > 0:
+        allocation_pct["renda_fixa"] = float((fi_total / total_value * 100).quantize(Decimal("0.01")))
 
-    # HHI — sum of squared weights (0 = diversified, 1 = concentrated)
-    weights = [Decimal(str(v)) / Decimal("100") for v in allocation_pct.values()]
-    hhi = float(sum(w ** 2 for w in weights).quantize(Decimal("0.0001")))
+    # HHI — computed on equity tickers only (FI is a single bucket)
+    equity_pct = {k: v for k, v in allocation_pct.items() if k != "renda_fixa"}
+    weights = [Decimal(str(v)) / Decimal("100") for v in equity_pct.values()]
+    hhi = float(sum(w ** 2 for w in weights).quantize(Decimal("0.0001"))) if weights else None
 
-    # Drift vs active suggested portfolio class allocations
-    drift = _compute_drift(session if False else None, holdings, allocation_pct, total_value, engine)
+    drift = _compute_drift(None, holdings, allocation_pct, total_value, engine, quotes, fi_total)
 
     return {
         "portfolio_summary": {
@@ -61,7 +67,7 @@ def portfolio_data_loader_node(state: AgentState) -> dict:
             "allocation_pct": allocation_pct,
             "hhi": hhi,
             "drift": drift,
-            "max_drawdown_pct": _compute_portfolio_max_drawdown(holdings, allocation_pct),
+            "max_drawdown_pct": _compute_portfolio_max_drawdown(holdings, equity_pct),
             "ticker_count": len(holdings),
         }
     }
@@ -99,41 +105,81 @@ def _load_from_snapshot(session: Session, account_id: Optional[str]) -> list[dic
     ]
 
 
-def _fetch_prices(tickers: list[str]) -> dict[str, Decimal]:
-    prices: dict[str, Decimal] = {}
+def _load_fi_total_from_snapshot(session: Session, account_id: Optional[str]) -> Decimal:
+    """Returns total current value of fixed income positions from latest snapshot."""
+    from investimentos.repository.portfolio_snapshot_repo import PortfolioSnapshotRepository
+
+    repo = PortfolioSnapshotRepository(session)
+    snap = repo.get_latest(account_id or "")
+    if snap is None:
+        return Decimal("0")
+    return sum((fi.current_value for fi in snap.fixed_income_positions), Decimal("0"))
+
+
+def _fetch_quotes(tickers: list[str]) -> dict[str, dict]:
+    """Fetch price + metadata (industry, quote_type) for each ticker.
+
+    Returns {ticker: {"price": Decimal, "industry": str, "quote_type": str}}.
+    """
+    result: dict[str, dict] = {}
     try:
-        yf = YFinanceClient()
+        yf_client = YFinanceClient()
         for ticker in tickers:
             try:
-                q = yf.get_quote(f"{ticker}.SA")
-                if q.get("price"):
-                    prices[ticker] = Decimal(str(q["price"]))
+                q = yf_client.get_quote(f"{ticker}.SA")
+                result[ticker] = {
+                    "price": q.get("price", Decimal("0")),
+                    "industry": q.get("industry", ""),
+                    "quote_type": q.get("quote_type", ""),
+                }
             except Exception:
-                pass
+                result[ticker] = {"price": Decimal("0"), "industry": "", "quote_type": ""}
     except Exception:
         pass
-    return prices
+    return result
 
 
-def _compute_drift(_, holdings: list[dict], allocation_pct: dict, total_value: Decimal, engine) -> dict:
+def _compute_drift(
+    _,
+    holdings: list[dict],
+    allocation_pct: dict,
+    total_value: Decimal,
+    engine,
+    quotes: dict,
+    fi_total: Decimal,
+) -> dict:
     """Compute drift per asset class vs active SuggestedPortfolio."""
     from investimentos.tools.allocation_drift import compute_drift
-    from investimentos.repository.suggested_portfolio_repo import SuggestedPortfolioRepository
     from investimentos.domain.models import AssetClass
 
-    # Simple asset class mapping based on ticker suffix
+    ETF_PREFIXES = ("BOVA", "SMAL", "IVVB", "HASH", "SPXI", "GOLD", "DIVO", "FIND", "MATB")
+
     def _guess_class(ticker: str) -> str:
         t = ticker.upper()
-        if t.endswith("11"):
-            return AssetClass.FII.value if not t.startswith(("BOVA", "SMAL", "IVVB", "HASH")) else AssetClass.ETF.value
+        if t.startswith(ETF_PREFIXES):
+            return AssetClass.ETF.value
+        meta = quotes.get(ticker, {})
+        ind = meta.get("industry", "").upper()
+        qt = meta.get("quote_type", "").upper()
+        # yfinance marks Brazilian FIIs as ETF with REIT in industry
+        if "REIT" in ind or "REAL ESTATE" in ind:
+            return AssetClass.FII.value
+        if qt == "ETF" and t.endswith("11") and not t.startswith(ETF_PREFIXES):
+            return AssetClass.FII.value
+        # Conservative default: tickers ending in "11" without REIT confirmation → ACAO
+        # (covers units like ALUP11, KLBN11 that are stocks, not FIIs)
         return AssetClass.ACAO.value
 
-    # Build actual class allocation from holdings
     class_values: dict[str, Decimal] = {}
     for h in holdings:
         cls = _guess_class(h["ticker"])
         v = h["qty"] * h.get("current_price", h["avg_cost"])
         class_values[cls] = class_values.get(cls, Decimal("0")) + v
+
+    if fi_total > 0:
+        class_values[AssetClass.RENDA_FIXA.value] = (
+            class_values.get(AssetClass.RENDA_FIXA.value, Decimal("0")) + fi_total
+        )
 
     if total_value == 0:
         return {}
@@ -143,15 +189,14 @@ def _compute_drift(_, holdings: list[dict], allocation_pct: dict, total_value: D
         for cls, val in class_values.items()
     }
 
-    # Get target from active SuggestedPortfolio
     with Session(engine) as session:
-        repo = SuggestedPortfolioRepository(session)
-        # Get active portfolio to find class allocations target
         from investimentos.domain.db import SuggestedPortfolioORM
         active = session.query(SuggestedPortfolioORM).filter_by(status="active").first()
         if active is None:
-            return {cls: {"actual_pct": float(pct), "target_pct": 0.0, "delta_pct": float(pct)} for cls, pct in actual_pct.items()}
-
+            return {
+                cls: {"actual_pct": float(pct), "target_pct": 0.0, "delta_pct": float(pct)}
+                for cls, pct in actual_pct.items()
+            }
         target_pct = {
             c["asset_class"]: Decimal(c["target_pct"])
             for c in (active.class_allocations_json or [])

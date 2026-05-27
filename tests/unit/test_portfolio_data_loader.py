@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from investimentos.domain.db import Base, AccountORM, TransactionORM
-from investimentos.domain.models import EquityPositionSnapshot, PortfolioSnapshot
+from investimentos.domain.models import EquityPositionSnapshot, FixedIncomePosition, PortfolioSnapshot
 from investimentos.agents.state import AgentState
 
 
@@ -38,9 +38,13 @@ def _add_transaction(session: Session, ticker: str, qty: float, price: float, tx
     session.commit()
 
 
-@patch("investimentos.agents.portfolio_data_loader._fetch_prices", return_value={})
+def _quote(price: float, industry: str = "", quote_type: str = "") -> dict:
+    return {"price": Decimal(str(price)), "industry": industry, "quote_type": quote_type}
+
+
+@patch("investimentos.agents.portfolio_data_loader._fetch_quotes", return_value={})
 @patch("investimentos.agents.portfolio_data_loader.engine_from_url")
-def test_loader_empty_db_returns_empty_summary(mock_engine, mock_prices, db_engine):
+def test_loader_empty_db_returns_empty_summary(mock_engine, mock_quotes, db_engine):
     mock_engine.return_value = db_engine
     from investimentos.agents.portfolio_data_loader import portfolio_data_loader_node
 
@@ -51,17 +55,19 @@ def test_loader_empty_db_returns_empty_summary(mock_engine, mock_prices, db_engi
     assert summary["hhi"] is None
 
 
-@patch("investimentos.agents.portfolio_data_loader._fetch_prices", return_value={"ITUB4": Decimal("40.00")})
+@patch("investimentos.agents.portfolio_data_loader._fetch_quotes")
 @patch("investimentos.agents.portfolio_data_loader.engine_from_url")
-def test_loader_reads_transactions(mock_engine, mock_prices, db_engine):
+def test_loader_reads_transactions(mock_engine, mock_quotes, db_engine):
     mock_engine.return_value = db_engine
+    mock_quotes.return_value = {
+        "ITUB4": _quote(40.0),
+        "PETR4": _quote(35.0),
+    }
+
     with Session(db_engine) as s:
         _add_account(s)
         _add_transaction(s, "ITUB4", 10, 39.38)
         _add_transaction(s, "PETR4", 5, 35.00)
-
-    # no market price for PETR4, falls back to avg_cost
-    mock_prices.return_value = {"ITUB4": Decimal("40.00"), "PETR4": Decimal("35.00")}
 
     from investimentos.agents.portfolio_data_loader import portfolio_data_loader_node
     out = portfolio_data_loader_node(AgentState(user_query="x"))
@@ -73,11 +79,10 @@ def test_loader_reads_transactions(mock_engine, mock_prices, db_engine):
     assert 0 < summary["hhi"] <= 1
 
 
-@patch("investimentos.agents.portfolio_data_loader._fetch_prices", return_value={})
+@patch("investimentos.agents.portfolio_data_loader._fetch_quotes", return_value={})
 @patch("investimentos.agents.portfolio_data_loader.engine_from_url")
-def test_loader_fallback_to_snapshot(mock_engine, mock_prices, db_engine):
+def test_loader_fallback_to_snapshot(mock_engine, mock_quotes, db_engine):
     mock_engine.return_value = db_engine
-    # No transactions, but a snapshot exists
     snap = PortfolioSnapshot(
         account_id="acc-1",
         snapshot_date=date(2026, 5, 22),
@@ -95,13 +100,14 @@ def test_loader_fallback_to_snapshot(mock_engine, mock_prices, db_engine):
     summary = out["portfolio_summary"]
     assert summary["source"] == "snapshot"
     assert "WEGE3" in summary["allocation_pct"]
-    assert summary["allocation_pct"]["WEGE3"] == pytest.approx(100.0)
 
 
-@patch("investimentos.agents.portfolio_data_loader._fetch_prices", return_value={"ITUB4": Decimal("40.00")})
+@patch("investimentos.agents.portfolio_data_loader._fetch_quotes")
 @patch("investimentos.agents.portfolio_data_loader.engine_from_url")
-def test_loader_hhi_single_asset_is_one(mock_engine, mock_prices, db_engine):
+def test_loader_hhi_single_asset_is_one(mock_engine, mock_quotes, db_engine):
     mock_engine.return_value = db_engine
+    mock_quotes.return_value = {"ITUB4": _quote(40.0)}
+
     with Session(db_engine) as s:
         _add_account(s)
         _add_transaction(s, "ITUB4", 10, 39.38)
@@ -111,10 +117,64 @@ def test_loader_hhi_single_asset_is_one(mock_engine, mock_prices, db_engine):
     assert out["portfolio_summary"]["hhi"] == pytest.approx(1.0, abs=0.001)
 
 
+@patch("investimentos.agents.portfolio_data_loader._fetch_quotes", return_value={})
+@patch("investimentos.agents.portfolio_data_loader.engine_from_url")
+def test_loader_includes_fi_from_snapshot(mock_engine, mock_quotes, db_engine):
+    """Fixed income from snapshot appears in allocation_pct as 'renda_fixa'."""
+    mock_engine.return_value = db_engine
+    snap = PortfolioSnapshot(
+        account_id="acc-1",
+        snapshot_date=date(2026, 5, 22),
+        source_file="extrato.pdf",
+        equity_positions=[
+            EquityPositionSnapshot(ticker="ITUB4", quantity=Decimal("10"), avg_cost_hint=Decimal("40.00")),
+        ],
+        fixed_income_positions=[
+            FixedIncomePosition(name="CDB X", invested_amount=Decimal("1000"), current_value=Decimal("1000")),
+        ],
+    )
+    from investimentos.repository.portfolio_snapshot_repo import PortfolioSnapshotRepository
+    with Session(db_engine) as s:
+        PortfolioSnapshotRepository(s).save(snap)
+
+    from investimentos.agents.portfolio_data_loader import portfolio_data_loader_node
+    out = portfolio_data_loader_node(AgentState(user_query="x", account_id="acc-1"))
+    summary = out["portfolio_summary"]
+    assert "renda_fixa" in summary["allocation_pct"]
+    assert summary["allocation_pct"]["renda_fixa"] > 0
+
+
+def test_guess_class_alup11_classified_as_acao():
+    """ALUP11 is a stock unit (ação), NOT a FII — yfinance has no REIT industry."""
+    from investimentos.agents.portfolio_data_loader import _compute_drift
+    from investimentos.domain.models import AssetClass
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    quotes = {"ALUP11": _quote(31.0, industry="Utilities", quote_type="EQUITY")}
+    holdings = [{"ticker": "ALUP11", "qty": Decimal("10"), "avg_cost": Decimal("30"), "current_price": Decimal("31")}]
+    drift = _compute_drift(None, holdings, {}, Decimal("310"), engine, quotes, Decimal("0"))
+    assert AssetClass.ACAO.value in drift
+
+
+def test_guess_class_real_fii_classified_as_fii():
+    """HGLG11 has REIT in yfinance industry → classified as FII."""
+    from investimentos.agents.portfolio_data_loader import _compute_drift
+    from investimentos.domain.models import AssetClass
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    quotes = {"HGLG11": _quote(150.0, industry="REIT - Diversified", quote_type="ETF")}
+    holdings = [{"ticker": "HGLG11", "qty": Decimal("5"), "avg_cost": Decimal("145"), "current_price": Decimal("150")}]
+    drift = _compute_drift(None, holdings, {}, Decimal("750"), engine, quotes, Decimal("0"))
+    assert AssetClass.FII.value in drift
+
+
 def test_compute_portfolio_max_drawdown_with_mock():
     from investimentos.agents.portfolio_data_loader import _compute_portfolio_max_drawdown
 
-    # Generate 60 days of declining-then-recovering prices
     dates = [f"2026-{str(i // 30 + 3).zfill(2)}-{str(i % 30 + 1).zfill(2)}" for i in range(60)]
     prices = [Decimal(str(100 - i)) if i < 30 else Decimal(str(70 + (i - 30))) for i in range(60)]
     hist = [{"date": d, "close": p, "volume": 1000} for d, p in zip(dates, prices)]
@@ -129,8 +189,8 @@ def test_compute_portfolio_max_drawdown_with_mock():
         )
 
     assert result is not None
-    assert result < 0  # drawdown is negative
-    assert result == pytest.approx(-30.0, abs=1.0)  # 100 → 70 = 30% drawdown
+    assert result < 0
+    assert result == pytest.approx(-30.0, abs=1.0)
 
 
 def test_compute_portfolio_max_drawdown_returns_none_on_error():

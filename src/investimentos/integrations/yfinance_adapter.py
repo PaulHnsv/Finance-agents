@@ -12,6 +12,8 @@ class YFinanceClient:
             "price": Decimal(str(price)),
             "name": info.get("longName") or info.get("shortName", ticker),
             "change_pct": Decimal(str(info.get("regularMarketChangePercent", 0))),
+            "industry": info.get("industry", ""),
+            "quote_type": info.get("quoteType", ""),
         }
 
     def get_historical(self, ticker: str, period: str = "1y", interval: str = "1d") -> list[dict]:
