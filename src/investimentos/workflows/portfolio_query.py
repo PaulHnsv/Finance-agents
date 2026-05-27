@@ -5,6 +5,7 @@ Routes query through coordinator → specialists → report writer.
 from langgraph.graph import StateGraph, END
 from investimentos.agents.state import AgentState
 from investimentos.agents.coordinator import coordinator_node
+from investimentos.agents.portfolio_data_loader import portfolio_data_loader_node
 from investimentos.agents.portfolio_analyst import portfolio_analyst_node
 from investimentos.agents.market_analyst import market_analyst_node
 from investimentos.agents.document_ingestor import document_ingestor_node
@@ -12,12 +13,10 @@ from investimentos.agents.report_writer import report_writer_node
 
 def route_after_coordinator(state: AgentState) -> str:
     intent = state.intent or "other"
-    if intent == "portfolio_analysis":
-        return "portfolio_analyst"
+    if intent in ("portfolio_analysis", "report"):
+        return "portfolio_data_loader"
     if intent == "market_query":
         return "market_analyst"
-    if intent == "report":
-        return "portfolio_analyst"
     if intent == "document_ingest":
         return "document_ingestor"
     return "report_writer"
@@ -31,6 +30,7 @@ def build_portfolio_query_graph():
     graph = StateGraph(AgentState)
 
     graph.add_node("coordinator", coordinator_node)
+    graph.add_node("portfolio_data_loader", portfolio_data_loader_node)
     graph.add_node("portfolio_analyst", portfolio_analyst_node)
     graph.add_node("market_analyst", market_analyst_node)
     graph.add_node("document_ingestor", document_ingestor_node)
@@ -42,12 +42,14 @@ def build_portfolio_query_graph():
         "coordinator",
         route_after_coordinator,
         {
-            "portfolio_analyst": "portfolio_analyst",
+            "portfolio_data_loader": "portfolio_data_loader",
             "market_analyst": "market_analyst",
             "document_ingestor": "document_ingestor",
             "report_writer": "report_writer",
         },
     )
+
+    graph.add_edge("portfolio_data_loader", "portfolio_analyst")
 
     graph.add_conditional_edges(
         "portfolio_analyst",
