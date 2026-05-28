@@ -4,6 +4,9 @@ from typing import Annotated, Optional, Any
 from pydantic import BaseModel
 import operator
 
+from investimentos.agents.schemas.market_brief import MarketBrief
+from investimentos.agents.schemas.portfolio_report import PortfolioReport
+
 DISCLAIMER = (
     "\n\n---\n⚠️ **Aviso**: Este relatório é meramente informativo e não constitui "
     "recomendação de investimento regulada pela CVM. Consulte um profissional habilitado "
@@ -18,6 +21,8 @@ class AgentState(BaseModel):
     specialist_outputs: Annotated[list[str], operator.add] = []
     portfolio_summary: Optional[dict[str, Any]] = None
     market_data: Optional[dict[str, Any]] = None
+    market_brief: Optional[MarketBrief] = None
+    portfolio_report: Optional[PortfolioReport] = None
     risk_metrics: Optional[dict[str, Any]] = None
     allocation_drift: Optional[dict[str, Any]] = None
     document_path: Optional[str] = None

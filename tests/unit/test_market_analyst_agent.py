@@ -1,21 +1,28 @@
 from unittest.mock import patch
-from investimentos.agents.state import AgentState, DISCLAIMER
+from investimentos.agents.state import AgentState
+from investimentos.agents.schemas.market_brief import MarketBrief, TickerMovement
 
 
-@patch("investimentos.agents.market_analyst.chat")
-def test_market_analyst_with_empty_tickers(mock_chat, monkeypatch):
-    monkeypatch.setenv("GITHUB_TOKEN", "ghp-x")
-    from investimentos.config import get_settings
-    get_settings.cache_clear()
+def test_market_analyst_returns_market_brief():
+    fake = MarketBrief(
+        summary="Mercado estável.",
+        ticker_movements=[TickerMovement(ticker="ITUB4", change_pct=1.0, comment="Alta.")],
+        macro_notes=[], warnings=[],
+    )
+    state = AgentState(
+        user_query="x",
+        portfolio_summary={"allocation_pct": {"ITUB4": 100.0}},
+    )
 
-    from investimentos.agents.market_analyst import market_analyst_node
+    with patch(
+        "investimentos.agents.market_analyst.chat_structured",
+        return_value=fake,
+    ), patch(
+        "investimentos.agents.market_analyst._fetch_market_data",
+        return_value={"ITUB4": {"price_change_pct": "1.0"}},
+    ):
+        from investimentos.agents.market_analyst import market_analyst_node
+        out = market_analyst_node(state)
 
-    mock_chat.return_value = "Resumo de mercado."
-    state = AgentState(user_query="x", portfolio_summary={"allocation_pct": {}})
-    out = market_analyst_node(state)
-    assert "specialist_outputs" in out
-    assert DISCLAIMER in out["specialist_outputs"][0]
-    assert out["market_data"] == {}
-    kwargs = mock_chat.call_args.kwargs
-    assert kwargs["model"] == "openai/gpt-4o"
-    assert kwargs["max_tokens"] == 500
+    assert isinstance(out["market_brief"], MarketBrief)
+    assert out["market_brief"].summary == "Mercado estável."
