@@ -47,6 +47,7 @@ def test_chat_returns_stripped_text(mock_openai_cls, monkeypatch):
     inst.chat.completions.create.assert_called_once_with(
         model="openai/gpt-4o-mini",
         max_tokens=10,
+        temperature=0.0,
         messages=[{"role": "user", "content": "hi"}],
     )
 
@@ -105,3 +106,33 @@ def test_chat_gives_up_after_three_attempts(mock_openai_cls, monkeypatch):
     with pytest.raises(RateLimitError):
         llm_client.chat(messages=[{"role": "user", "content": "x"}], model="m", max_tokens=1)
     assert inst.chat.completions.create.call_count == 3
+
+
+@patch("investimentos.llm.client.OpenAI")
+def test_chat_passes_temperature_zero_by_default(mock_openai_cls, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp-x")
+    from investimentos.config import get_settings
+    from investimentos.llm import client as llm_client
+    get_settings.cache_clear()
+    llm_client.get_llm_client.cache_clear()
+    inst = MagicMock()
+    inst.chat.completions.create.return_value = _mk_completion("ok")
+    mock_openai_cls.return_value = inst
+    llm_client.chat(messages=[{"role": "user", "content": "x"}], model="m", max_tokens=10)
+    kwargs = inst.chat.completions.create.call_args.kwargs
+    assert kwargs["temperature"] == 0.0
+
+
+@patch("investimentos.llm.client.OpenAI")
+def test_chat_respects_explicit_temperature(mock_openai_cls, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp-x")
+    from investimentos.config import get_settings
+    from investimentos.llm import client as llm_client
+    get_settings.cache_clear()
+    llm_client.get_llm_client.cache_clear()
+    inst = MagicMock()
+    inst.chat.completions.create.return_value = _mk_completion("ok")
+    mock_openai_cls.return_value = inst
+    llm_client.chat(messages=[{"role": "user", "content": "x"}], model="m", max_tokens=10, temperature=0.7)
+    kwargs = inst.chat.completions.create.call_args.kwargs
+    assert kwargs["temperature"] == 0.7

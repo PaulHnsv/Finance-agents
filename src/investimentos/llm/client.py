@@ -24,11 +24,12 @@ def get_llm_client() -> OpenAI:
     wait=wait_exponential(multiplier=0, min=0, max=0),
     reraise=True,
 )
-def chat(messages: list[dict], *, model: str, max_tokens: int) -> str:
+def chat(messages: list[dict], *, model: str, max_tokens: int, temperature: float = 0.0) -> str:
     client = get_llm_client()
     response = client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,
+        temperature=temperature,
         messages=messages,
     )
     content = response.choices[0].message.content
