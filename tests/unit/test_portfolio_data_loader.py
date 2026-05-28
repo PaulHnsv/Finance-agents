@@ -144,34 +144,6 @@ def test_loader_includes_fi_from_snapshot(mock_engine, mock_quotes, db_engine):
     assert summary["allocation_pct"]["renda_fixa"] > 0
 
 
-def test_guess_class_alup11_classified_as_acao():
-    """ALUP11 is a stock unit (ação), NOT a FII — yfinance has no REIT industry."""
-    from investimentos.agents.portfolio_data_loader import _compute_drift
-    from investimentos.domain.models import AssetClass
-
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-
-    quotes = {"ALUP11": _quote(31.0, industry="Utilities", quote_type="EQUITY")}
-    holdings = [{"ticker": "ALUP11", "qty": Decimal("10"), "avg_cost": Decimal("30"), "current_price": Decimal("31")}]
-    drift = _compute_drift(None, holdings, {}, Decimal("310"), engine, quotes, Decimal("0"))
-    assert AssetClass.ACAO.value in drift
-
-
-def test_guess_class_real_fii_classified_as_fii():
-    """HGLG11 has REIT in yfinance industry → classified as FII."""
-    from investimentos.agents.portfolio_data_loader import _compute_drift
-    from investimentos.domain.models import AssetClass
-
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-
-    quotes = {"HGLG11": _quote(150.0, industry="REIT - Diversified", quote_type="ETF")}
-    holdings = [{"ticker": "HGLG11", "qty": Decimal("5"), "avg_cost": Decimal("145"), "current_price": Decimal("150")}]
-    drift = _compute_drift(None, holdings, {}, Decimal("750"), engine, quotes, Decimal("0"))
-    assert AssetClass.FII.value in drift
-
-
 def test_compute_portfolio_max_drawdown_with_mock():
     from investimentos.agents.portfolio_data_loader import _compute_portfolio_max_drawdown
 
@@ -201,3 +173,33 @@ def test_compute_portfolio_max_drawdown_returns_none_on_error():
             {"ITUB4": 100.0},
         )
     assert result is None
+
+
+def test_loader_exposes_holdings_detail_with_catalog_classification(db_engine):
+    from investimentos.domain.db import AssetORM
+    with Session(db_engine) as s:
+        _add_account(s)
+        _add_transaction(s, "ALUP11", 10, 30.0)
+        s.add(AssetORM(
+            ticker="ALUP11", name="Alupar Investimento",
+            asset_class="acao", tax_class="renda_variavel",
+        ))
+        s.commit()
+
+    with patch(
+        "investimentos.agents.portfolio_data_loader._fetch_quotes",
+        return_value={"ALUP11": {"price": Decimal("31.0"), "industry": "", "quote_type": ""}},
+    ), patch(
+        "investimentos.agents.portfolio_data_loader.engine_from_url",
+        return_value=db_engine,
+    ):
+        from investimentos.agents.portfolio_data_loader import portfolio_data_loader_node
+        out = portfolio_data_loader_node(AgentState(user_query="x"))
+
+    summary = out["portfolio_summary"]
+    assert "holdings_detail" in summary
+    details = summary["holdings_detail"]
+    assert len(details) == 1
+    assert details[0]["ticker"] == "ALUP11"
+    assert details[0]["asset_class"] == "acao"
+    assert details[0]["display_name"] == "Alupar Investimento"
