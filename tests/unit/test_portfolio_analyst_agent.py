@@ -1,31 +1,52 @@
 from unittest.mock import patch
-from investimentos.agents.state import AgentState, DISCLAIMER
+from investimentos.agents.state import AgentState
+from investimentos.agents.schemas.portfolio_report import (
+    PortfolioReport, DiversificationFinding, NextStep, DriftFinding,
+)
+from investimentos.domain.models import AssetClass
 
 
-@patch("investimentos.agents.portfolio_analyst.chat")
-def test_portfolio_analyst_emits_specialist_output(mock_chat, monkeypatch):
-    monkeypatch.setenv("GITHUB_TOKEN", "ghp-x")
-    from investimentos.config import get_settings
-    get_settings.cache_clear()
+def _fake_report() -> PortfolioReport:
+    return PortfolioReport(
+        summary="Carteira diversificada.",
+        diversification=DiversificationFinding(
+            hhi=0.18, classification="diversificada", comment="OK.",
+        ),
+        drift=[DriftFinding(
+            asset_class=AssetClass.ACAO, actual_pct=60.0, target_pct=60.0,
+            delta_pct=0.0, severity="ok", comment="Alinhada.",
+        )],
+        risks=[],
+        next_steps=[
+            NextStep(action="Manter", priority="baixa", rationale="OK"),
+            NextStep(action="Revisar trimestre", priority="baixa", rationale="Higiene"),
+        ],
+    )
 
-    from investimentos.agents.portfolio_analyst import portfolio_analyst_node
 
-    mock_chat.return_value = "Análise: carteira concentrada em PETR4."
+def test_portfolio_analyst_returns_portfolio_report():
     state = AgentState(
         user_query="x",
         portfolio_summary={
-            "allocation_pct": {"PETR4": 80, "VALE3": 20},
-            "hhi": 0.68,
-            "max_drawdown_pct": -12.0,
-            "twr_pct": 5.2,
-            "drift": {"PETR4": 30.0},
+            "allocation_pct": {"ITUB4": 60.0, "PETR4": 40.0},
+            "hhi": 0.18, "drift": {}, "holdings_detail": [], "source": "transactions",
         },
     )
-    out = portfolio_analyst_node(state)
-    assert "specialist_outputs" in out
-    assert len(out["specialist_outputs"]) == 1
-    assert "Análise" in out["specialist_outputs"][0]
-    assert DISCLAIMER in out["specialist_outputs"][0]
-    kwargs = mock_chat.call_args.kwargs
-    assert kwargs["model"] == "openai/gpt-4o"
-    assert kwargs["max_tokens"] == 600
+    with patch(
+        "investimentos.agents.portfolio_analyst.chat_structured",
+        return_value=_fake_report(),
+    ):
+        from investimentos.agents.portfolio_analyst import portfolio_analyst_node
+        out = portfolio_analyst_node(state)
+
+    assert isinstance(out["portfolio_report"], PortfolioReport)
+    assert out["portfolio_report"].diversification.classification == "diversificada"
+
+
+def test_portfolio_analyst_empty_summary_skips_llm():
+    state = AgentState(user_query="x", portfolio_summary={"source": "empty"})
+    with patch("investimentos.agents.portfolio_analyst.chat_structured") as mock_chat:
+        from investimentos.agents.portfolio_analyst import portfolio_analyst_node
+        out = portfolio_analyst_node(state)
+    mock_chat.assert_not_called()
+    assert out["portfolio_report"] is None
