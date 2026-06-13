@@ -3,6 +3,7 @@ Coordinator agent — classifies user intent and routes to specialists.
 Only the query text is sent to the LLM (no financial data).
 """
 from investimentos.agents.state import AgentState
+from investimentos.agents.query_intent import is_direct_holdings_question
 from investimentos.config import get_settings
 from investimentos.llm.client import chat
 
@@ -31,6 +32,9 @@ VALID_INTENTS = {
 
 
 def coordinator_node(state: AgentState) -> dict:
+    if is_direct_holdings_question(state.user_query):
+        return {"intent": "portfolio_analysis"}
+
     settings = get_settings()
     raw = chat(
         messages=[{"role": "user", "content": INTENT_PROMPT.format(query=state.user_query)}],

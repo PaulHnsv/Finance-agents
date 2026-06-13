@@ -9,6 +9,7 @@ from investimentos.agents.portfolio_data_loader import portfolio_data_loader_nod
 from investimentos.agents.portfolio_analyst import portfolio_analyst_node
 from investimentos.agents.market_analyst import market_analyst_node
 from investimentos.agents.document_ingestor import document_ingestor_node
+from investimentos.agents.query_intent import is_direct_holdings_question
 from investimentos.agents.report_writer import report_writer_node
 
 def route_after_coordinator(state: AgentState) -> str:
@@ -25,6 +26,12 @@ def route_after_portfolio(state: AgentState) -> str:
     if state.intent == "report":
         return "market_analyst"
     return "report_writer"
+
+
+def route_after_portfolio_data_loader(state: AgentState) -> str:
+    if is_direct_holdings_question(state.user_query):
+        return "report_writer"
+    return "portfolio_analyst"
 
 def build_portfolio_query_graph():
     graph = StateGraph(AgentState)
@@ -49,7 +56,14 @@ def build_portfolio_query_graph():
         },
     )
 
-    graph.add_edge("portfolio_data_loader", "portfolio_analyst")
+    graph.add_conditional_edges(
+        "portfolio_data_loader",
+        route_after_portfolio_data_loader,
+        {
+            "portfolio_analyst": "portfolio_analyst",
+            "report_writer": "report_writer",
+        },
+    )
 
     graph.add_conditional_edges(
         "portfolio_analyst",

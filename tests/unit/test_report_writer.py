@@ -34,3 +34,40 @@ def test_report_writer_falls_back_to_specialist_outputs():
     state = AgentState(user_query="x", specialist_outputs=["## Custom\n\nFoo bar."])
     out = report_writer_node(state)
     assert "Foo bar" in out["report_markdown"]
+
+
+def test_report_writer_answers_direct_stock_list_question():
+    state = AgentState(
+        user_query="quais ações tenho na minha carteira?",
+        portfolio_summary={
+            "holdings_detail": [
+                {
+                    "ticker": "WEGE3",
+                    "display_name": "WEG",
+                    "asset_class": "acao",
+                    "allocation_pct": 35.5,
+                },
+                {
+                    "ticker": "KNRI11",
+                    "display_name": "Kinea Renda Imobiliária",
+                    "asset_class": "fii",
+                    "allocation_pct": 12.0,
+                },
+                {
+                    "ticker": "ALUP11",
+                    "display_name": "Alupar",
+                    "asset_class": "acao",
+                    "allocation_pct": 52.5,
+                },
+            ],
+        },
+        portfolio_report=_minimal_report(),
+    )
+
+    out = report_writer_node(state)
+
+    assert "Ações na carteira" in out["report_markdown"]
+    assert "ALUP11" in out["report_markdown"]
+    assert "WEGE3" in out["report_markdown"]
+    assert "KNRI11" not in out["report_markdown"]
+    assert "Relatório da Carteira" not in out["report_markdown"]
